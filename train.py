@@ -24,7 +24,7 @@ from torch.optim import lr_scheduler
 from tqdm import tqdm
 
 FILE = Path(__file__).resolve()
-ROOT = FILE.parents[0]  # YOLOv5 root directory
+ROOT = FILE.parents[0]  # YOLOv5 root directory.
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
@@ -63,8 +63,8 @@ RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 GIT_INFO = check_git_info()
 
-#os.environ["DATASETS"] = "/workspace/datasets"
-os.environ["DATASETS"] = "/home/juanpe/datasets"
+os.environ["DATASETS"] = "/workspace/datasets"
+#os.environ["DATASETS"] = "/home/juanpe/datasets"
 
 ####################################################################################################3
 ###########################     YOLO DATALOADER ######################################################
@@ -110,14 +110,14 @@ def get_data_loaders(opt):
         A.VerticalFlip(p=0.5),
         #A.RandomBrightnessContrast(p=0.5),
         #A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.1, rotate_limit=45, p=0.5)
-    ], bbox_params=A.BboxParams(format='pascal_voc', min_area=70, min_visibility=0.9, label_fields=['class_labels']))
+    ], bbox_params=A.BboxParams(format='pascal_voc', min_area=80, min_visibility=0.7, label_fields=['class_labels']))
     
     dataset_dir = os.path.expandvars(f'$DATASETS/{opt.db}')
     if (opt.db2 is not None):
         dataset_dir2 = os.path.expandvars(f'$DATASETS/{opt.db2}')
     else:
         dataset_dir2 = None
-    train_db    = SeaDronSee(dataset_dir, dataset_dir2, partition='training', config=opt, transforms=train_transforms)
+    train_db    = SeaDronSee(dataset_dir, dataset_dir2, partition='training', config=opt, transforms=True)
     val_db      = SeaDronSee(dataset_dir, dataset_dir2, partition='validation',   config=opt, transforms=None)
     test_db     = SeaDronSee(dataset_dir, dataset_dir2, partition='test',  config=opt, transforms=None)
 
@@ -187,10 +187,9 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         data_dict = data_dict or check_dataset(data)  # check if None
     train_path, val_path = data_dict['train'], data_dict['val']
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
-    print("N classes: ", nc)
     names = {0: 'item'} if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
     is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
-
+    print("is coco: ", is_coco)
     # Model
     check_suffix(weights, '.pt')  # check weights
     pretrained = weights.endswith('.pt')
@@ -280,13 +279,16 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                                               shuffle=True,
                                               seed=opt.seed)
     #print("dataset.labels: ", dataset.labels)
+    
+    dataloader, train_db = get_data_loaders(opt)
+    train_loader, val_loader, test_dataloader = dataloader[0], dataloader[1], dataloader[2]
 
-    labels = np.concatenate(dataset.labels, 0)
+    labels = np.concatenate(train_db.labels_bbox, 0)
     mlc = int(labels[:, 0].max())  # max label class
     assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
 
     '''for i, (imgs2, annotations2, paths2, shapes2) in enumerate(train_loader2):
-        if(i==0):
+        if(i==0 or i==1):
             print("i: ", i)
             print("imgs: ", imgs2)
             #print("Numero de batches por imagen: ",len(imgs[0])) # numero de batches por cada imagen
@@ -298,11 +300,10 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     print("len trainloader: ", len(train_loader2))'''
     
     ########################################
-    dataloader, train_db = get_data_loaders(opt)
-    train_loader, val_loader, test_dataloader = dataloader[0], dataloader[1], dataloader[2]
+
 
     '''for i, (imgs3, targets3, paths3, shapes3) in enumerate(train_loader):
-        if(i==0):
+        if(i==0 or i==1):
             print("i: ", i)
             print("imgs: ", imgs3)
             print("Targets: ", targets3)
@@ -339,8 +340,6 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     if cuda and RANK != -1:
         model = smart_DDP(model)
 
-    print("len dataset.labels: ", len(dataset.labels))
-    print("len traindb: ", len(train_db.labels))
     # Model attributes
     nl = de_parallel(model).model[-1].nl  # number of detection layers (to scale hyps)
     hyp['box'] *= 3 / nl  # scale to layers
@@ -396,8 +395,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
             callbacks.run('on_train_batch_start')
             ni = i + nb * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255  # uint8 to float32, 0-255 to 0.0-1.0
-            #print("Labels: ", targets)
-            #print("paths: ", paths)
+
             # Warmup
             if ni <= nw:
                 xi = [0, nw]  # x interp
@@ -479,10 +477,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
             if fi > best_fitness:
                 best_fitness = fi
             log_vals = list(mloss) + list(results) + lr
-            #print("results: ", results)
-            #print("mloss: ", mloss)
-            #print("log vals: ", log_vals)
-            #print("len log vals: ", len(log_vals))
+            #print("Results: ", results)
             callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
 
             # Save model
@@ -530,7 +525,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                         batch_size=batch_size // WORLD_SIZE * 2,
                         imgsz=imgsz,
                         model=attempt_load(f, device).half(),
-                        iou_thres=0.65 if is_coco else 0.60,  # best pycocotools at iou 0.65
+                        iou_thres=0.2 if is_coco else 0.2,  # best pycocotools at iou 0.65     iou_thres=0.65 if is_coco else 0.60,
                         single_cls=single_cls,
                         dataloader=val_loader,
                         save_dir=save_dir,
@@ -586,7 +581,7 @@ def parse_opt(known=False):
     parser.add_argument('--quad', action='store_true', help='quad dataloader')
     parser.add_argument('--cos-lr', action='store_true', help='cosine LR scheduler')
     parser.add_argument('--label-smoothing', type=float, default=0.0, help='Label smoothing epsilon')
-    parser.add_argument('--patience', type=int, default=100, help='EarlyStopping patience (epochs without improvement)')
+    parser.add_argument('--patience', type=int, default=300, help='EarlyStopping patience (epochs without improvement)')
     parser.add_argument('--freeze', nargs='+', type=int, default=[0], help='Freeze layers: backbone=10, first3=0 1 2')
     parser.add_argument('--save-period', type=int, default=-1, help='Save checkpoint every x epochs (disabled if < 1)')
     parser.add_argument('--seed', type=int, default=0, help='Global training seed')
@@ -635,7 +630,10 @@ def main(opt, callbacks=Callbacks()):
         opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
 
     # DDP mode
+    print("LOcal rank: ", LOCAL_RANK)
     device = select_device(opt.device, batch_size=opt.batch_size)
+    # device = torch.device( f'cuda:{1}' if torch.cuda.is_available() else 'cpu')
+    print("device: ", device)
     if LOCAL_RANK != -1:
         msg = 'is not compatible with YOLOv5 Multi-GPU DDP training'
         assert not opt.image_weights, f'--image-weights {msg}'
@@ -645,6 +643,7 @@ def main(opt, callbacks=Callbacks()):
         assert torch.cuda.device_count() > LOCAL_RANK, 'insufficient CUDA devices for DDP command'
         torch.cuda.set_device(LOCAL_RANK)
         device = torch.device('cuda', LOCAL_RANK)
+        print("device2: ", device)
         dist.init_process_group(backend='nccl' if dist.is_nccl_available() else 'gloo')
 
     # Train
@@ -761,5 +760,5 @@ def run(**kwargs):
 if __name__ == '__main__':
     opt = parse_opt()
     opt.noautoanchor = True
-    opt.augment = False
+    opt.single_cls = True
     main(opt)
